@@ -133,17 +133,25 @@ class GerritWatcher(threading.Thread):
 
     def _consume(self, client):
         """Consumes events using the given client."""
-        stdin, stdout, stderr = client.exec_command("gerrit stream-events")
+        try:
+            stdin, stdout, stderr = client.exec_command("gerrit stream-events")
 
-        self.state = CONSUMING
-        self._listen(stdout, stderr)
+            self.state = CONSUMING
+            self._listen(stdout, stderr)
 
-        ret = stdout.channel.recv_exit_status()
-        self.log.debug("SSH exit status: %s" % ret)
+            ret = stdout.channel.recv_exit_status()
+            self.log.debug("SSH exit status: %s" % ret)
 
-        if ret:
-            raise Exception("Gerrit error executing stream-events:"
-                            " return code %s" % ret)
+            if ret:
+                raise Exception("Gerrit error executing stream-events:"
+                                " return code %s" % ret)
+        except KeyboardInterrupt:
+            if client:
+                client.close()
+            self.gerrit.event_queue.clear()
+            exit(-1)
+        except ValueError:
+            self.log.error("It feels like listener was killed by user")
 
     def _run(self):
         self.state = CONNECTING
@@ -151,6 +159,8 @@ class GerritWatcher(threading.Thread):
         self.state = CONNECTED
         try:
             self._consume(client)
+        except KeyboardInterrupt:
+            raise
         except Exception:
             # NOTE(harlowja): allow consuming failures to *always* be retryable
             self.log.exception("Exception consuming ssh event stream:")
@@ -170,8 +180,9 @@ class GerritWatcher(threading.Thread):
             while True:
                 self.state = DISCONNECTED
                 self._run()
-        finally:
+        except KeyboardInterrupt:
             self.state = DEAD
+            raise
 
 
 class Gerrit(object):
