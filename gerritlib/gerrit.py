@@ -17,9 +17,9 @@ import json
 import logging
 import pprint
 import select
-import six.moves
 import threading
 import time
+from Queue import Queue, Empty, Full
 
 import paramiko
 
@@ -151,7 +151,7 @@ class GerritWatcher(threading.Thread):
             self.gerrit.event_queue.clear()
             exit(-1)
         except ValueError:
-            self.log.error("It feels like listener was killed by user")
+            self.log.info("It feels like listener was killed by user")
 
     def _run(self):
         self.state = CONNECTING
@@ -198,7 +198,7 @@ class Gerrit(object):
         self.installed_plugins = None
 
     def startWatching(self, connection_attempts=-1, retry_delay=5):
-        self.event_queue = six.moves.queue.Queue()
+        self.event_queue = Queue()
         watcher = GerritWatcher(self,
                                 connection_attempts=connection_attempts,
                                 retry_delay=retry_delay)
@@ -207,10 +207,20 @@ class Gerrit(object):
         self.watcher_thread.start()
 
     def addEvent(self, data):
-        return self.event_queue.put(data)
+        try:
+            return self.event_queue.put(data)
+        except Full:
+            logging.info("Queue is full")
+        except KeyboardInterrupt:
+            return
 
     def getEvent(self):
-        return self.event_queue.get()
+        try:
+            return self.event_queue.get()
+        except Empty:
+            logging.info("Queue is empty")
+        except KeyboardInterrupt:
+            return
 
     def createGroup(self, group, visible_to_all=True, owner=None):
         cmd = 'gerrit create-group'
